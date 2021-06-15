@@ -9,8 +9,6 @@
 #include <windows.h>
 #include <atomic>
 
-using namespace std;
-
 class PythonInstance
 {
 public:
@@ -18,7 +16,7 @@ public:
 	int func2(int i) { std::cout << "PythonInstance : func2 : " << i << '\n'; return ++i; }
 };
 
-using lambdaType = std::function<int(PythonInstance)>;
+using lambdaType = std::function<void(PythonInstance &)>;
 
 class PythonRunner {
 	std::thread mt;
@@ -54,8 +52,7 @@ public:
 	void threadproc()
 	{
 		PythonInstance python;
-		cout << "threadproc " << GetCurrentThreadId() << endl;		
-		//while (wantQuitExec == false) {
+		std::cout << "threadproc " << GetCurrentThreadId() << '\n';		
 		std::unique_lock<std::mutex> lk(execOrQuitMutex);
 		while (wantQuit == false)
 		{
@@ -63,6 +60,7 @@ public:
 			if (readyToExec)
 			{
 				readyToExec = false;
+					std::cout << "threadproc: lambda call in thread " << GetCurrentThreadId() << '\n';
 				lambda(python);
 				{
 					std::lock_guard<std::mutex> lockReady(execDoneMutex);
@@ -71,10 +69,10 @@ public:
 				execDoneCV.notify_one();
 			}
 		}
-		cout << "end of threadproc\n";
+		std::cout << "end of threadproc\n";
 	}
 
-	void printThreadId() { cout << "printCurrentThreadId : " << GetCurrentThreadId() << endl; }
+	void printThreadId() { std::cout << "printCurrentThreadId : " << GetCurrentThreadId() << '\n'; }
 	
 	void queryExecLambda(const lambdaType l) {
 		std::lock_guard<std::mutex> otherLock(otherMutex);
@@ -91,65 +89,43 @@ public:
 	}
 };
 
-//template <typename Functor, typename ... Args>
-//auto runPythonfFunction(PythonInstance &p, Functor funcptr, Args &&... args)
-//{
-//	using returnType = std::result_of_t<Functor(PythonInstance, Args...)>();
-//
-//	return p.*funcptr(std::forward<Args>(args)...);
-//}
-
-//TODO template this function
-int runPythonFunction(PythonRunner &runner, int(PythonInstance::*funcptr)(int), int arg1)
+template <
+	typename FuncPtr, typename ... Args,
+	typename returnType = std::result_of_t<FuncPtr(PythonInstance, Args...)>,
+	typename = std::enable_if_t<!std::is_same<void, returnType>::value>
+>
+auto runPythonFunction(PythonRunner &runner, FuncPtr funcptr, Args &&... args)
 {
-	int ret{};
-	auto lambda = [&](PythonInstance p)
+	returnType ret{};
+	const auto lambda = [&] (PythonInstance &p)
 	{
-		ret = (p.*funcptr)(arg1);
-		return 0;
+		ret = (p.*funcptr)(std::forward<Args>(args)...);
 	};
 	runner.queryExecLambda(lambda);
+
 	return ret;
+}
+
+template <
+	typename FuncPtr, typename ... Args,
+	typename returnType = std::result_of_t<FuncPtr(PythonInstance, Args...)>,
+	typename = std::enable_if_t<std::is_same<void, returnType>::value>
+	>
+void runPythonFunction(PythonRunner &runner, FuncPtr funcptr, Args &&... args)
+{
+	const auto lambda = [&](PythonInstance &p)
+	{
+		(p.*funcptr)(std::forward<Args>(args)...);
+	};
+	runner.queryExecLambda(lambda);
 }
 
 int main()
 {
-	cout << "Main " << GetCurrentThreadId() << endl;
-	{
-		PythonRunner t;
-		//std::thread t1(&Toto::Exec,&t);	
-		//std::thread t1(&Toto::Other, &t);
-		//auto lambda1 = [&t](PythonInstance p)
-		//{
-		//	t.printThreadId();
-		//	p.func1();
-		//	return 0;
-		//};
-		//int test = 0;
-		//std::cout << "test : " << test << '\n';
-		//auto lambda2 = [&t, &test](PythonInstance p)
-		//{
-		//	t.printThreadId();
-		//	test = p.func2(1);
-		//	return 0; 
-		//};
-
-		//t.queryExecLambda(lambda1);
-		const auto test = runPythonFunction(t, &PythonInstance::func2, 0);
-		std::thread t1([&] {runPythonFunction(t, &PythonInstance::func2, 0); });
-		t1.join();
-		std::cout << "test : " << test << '\n';
-	}
-	//t1.join();
+	std::cout << "Main " << GetCurrentThreadId() << '\n';
+	PythonRunner t;
+	runPythonFunction(t, &PythonInstance::func1);
+	//runPythonFunction(t, &PythonInstance::func2); // <- Do not compile (bad args)
+	std::thread t1([&] {runPythonFunction(t, &PythonInstance::func2, 0); });
+	t1.join();
 }
-
-// Run program: Ctrl + F5 or Debug > Start Without Debugging menu
-// Debug program: F5 or Debug > Start Debugging menu
-
-// Tips for Getting Started: 
-//   1. Use the Solution Explorer window to add/manage files
-//   2. Use the Team Explorer window to connect to source control
-//   3. Use the Output window to see build output and other messages
-//   4. Use the Error List window to view errors
-//   5. Go to Project > Add New Item to create new code files, or Project > Add Existing Item to add existing code files to the project
-//   6. In the future, to open this project again, go to File > Open > Project and select the .sln file
